@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>Woki — Talk. Release. Done.</title>
+<meta name="description" content="Simple internet walkie-talkie. Create or join a room and talk with push-to-talk voice." />
+<meta name="theme-color" content="#0e1013" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="icon" href="icons/icon-192.png" />
+<style>
+/* ---------- Design tokens ---------- */
+:root {
+  --bg: #0e1013;
+  --bg-elev: #16191d;
+  --card: #1b1f24;
+  --card-border: #262b31;
+  --accent: #4fd1a5;       /* single strong accent: soft signal green */
+  --accent-strong: #37c495;
+  --accent-glow: rgba(79, 209, 165, 0.35);
+  --danger: #ef6a6a;
+  --text: #f4f6f7;
+  --text-dim: #9aa3ab;
+  --text-faint: #667079;
+  --radius-lg: 28px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  height: 100%;
+  overscroll-behavior-y: none;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding: calc(24px + var(--safe-top)) 20px calc(24px + var(--safe-bottom));
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  animation: fadeIn 0.25s ease;
+}
+
+.hidden { display: none !important; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Typography ---------- */
+h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: -0.02em; }
+p { margin: 0; color: var(--text-dim); }
+
+.logo {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+.logo span { color: var(--accent); }
+
+.tagline {
+  color: var(--text-dim);
+  font-size: 16px;
+  margin-top: 6px;
+}
+
+/* ---------- Buttons ---------- */
+button {
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.btn {
+  width: 100%;
+  padding: 18px 22px;
+  border-radius: var(--radius-md);
+  font-size: 17px;
+  font-weight: 700;
+  transition: transform 0.12s ease, opacity 0.12s ease, background 0.12s ease;
+}
+.btn:active { transform: scale(0.97); }
+
+.btn-primary {
+  background: var(--accent);
+  color: #06120d;
+  box-shadow: 0 8px 24px var(--accent-glow);
+}
+.btn-primary:hover { background: var(--accent-strong); }
+
+.btn-secondary {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--card-border);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--card-border);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid rgba(239, 106, 106, 0.35);
+}
+
+.btn-row {
+  display: flex;
+  gap: 12px;
+}
+.btn-row .btn { flex: 1; }
+
+.btn[disabled] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ---------- Inputs ---------- */
+.field {
+  width: 100%;
+  padding: 18px 20px;
+  border-radius: var(--radius-md);
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.field::placeholder { color: var(--text-faint); font-weight: 500; }
+.field:focus { border-color: var(--accent); }
+
+.field-code {
+  text-align: center;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  font-size: 26px;
+}
+
+.field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+  display: block;
+}
+
+.char-count {
+  font-size: 12px;
+  color: var(--text-faint);
+  text-align: right;
+  margin-top: 6px;
+}
+
+/* ---------- Layout helpers ---------- */
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.spacer { flex: 1; }
+.center { display: flex; flex-direction: column; align-items: center; text-align: center; }
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.back-btn {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- Status pill ---------- */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.status-pill.connected .status-dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.status-pill.connecting .status-dot {
+  background: #e3b34f;
+  animation: pulse 1.1s ease-in-out infinite;
+}
+.status-pill.reconnecting .status-dot {
+  background: #e3b34f;
+  animation: pulse 0.7s ease-in-out infinite;
+}
+.status-pill.disconnected .status-dot {
+  background: var(--danger);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ---------- Cards ---------- */
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 22px;
+}
+
+.code-display {
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+  text-align: center;
+  padding: 22px 0;
+}
+
+.room-name-display {
+  text-align: center;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+/* ---------- Toast / error banner ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + var(--safe-bottom));
+  transform: translateX(-50%);
+  background: #221415;
+  border: 1px solid rgba(239, 106, 106, 0.4);
+  color: #ffdada;
+  padding: 14px 18px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 600;
+  max-width: 90vw;
+  text-align: center;
+  z-index: 999;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  animation: toastIn 0.2s ease;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ---------- Room screen ---------- */
+.room-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.room-title { font-size: 21px; }
+.room-sub { font-size: 13px; margin-top: 2px; }
+
+.participants {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.participant {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.participant.speaking {
+  border-color: var(--accent);
+  background: rgba(79, 209, 165, 0.08);
+}
+
+.avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #2a2f36;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.participant.speaking .avatar {
+  background: var(--accent);
+  color: #06120d;
+}
+
+.participant-name {
+  flex: 1;
+  font-weight: 600;
+  font-size: 15px;
+}
+.participant-you {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mini-wave {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 16px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.participant.speaking .mini-wave { opacity: 1; }
+.mini-wave span {
+  width: 3px;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: waveBar 0.9s ease-in-out infinite;
+}
+.mini-wave span:nth-child(1) { height: 40%; animation-delay: 0s; }
+.mini-wave span:nth-child(2) { height: 100%; animation-delay: 0.15s; }
+.mini-wave span:nth-child(3) { height: 60%; animation-delay: 0.3s; }
+
+@keyframes waveBar {
+  0%, 100% { transform: scaleY(0.4); }
+  50% { transform: scaleY(1); }
+}
+
+/* ---------- Talk button ---------- */
+.talk-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 10px 0 30px;
+}
+
+.talk-btn {
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 2px solid var(--card-border);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  touch-action: none;
+}
+
+.talk-btn .talk-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--bg-elev);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.talk-btn .talk-icon svg { width: 22px; height: 22px; }
+
+.talk-btn.active {
+  background: var(--accent);
+  color: #06120d;
+  border-color: var(--accent);
+  transform: scale(1.06);
+  box-shadow: 0 0 0 14px var(--accent-glow), 0 0 60px var(--accent-glow);
+}
+.talk-btn.active .talk-icon { background: rgba(6, 18, 13, 0.15); }
+
+.talk-btn.locked {
+  opacity: 0.55;
+}
+
+.talk-hint {
+  font-size: 13px;
+  color: var(--text-faint);
+  text-align: center;
+  min-height: 18px;
+}
+
+.talk-waves {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+}
+.talk-btn.active .talk-waves span {
+  display: block;
+}
+.talk-waves span {
+  display: none;
+  width: 4px;
+  background: #06120d;
+  border-radius: 2px;
+  animation: waveBar 0.8s ease-in-out infinite;
+}
+.talk-waves span:nth-child(1) { height: 30%; animation-delay: 0s; }
+.talk-waves span:nth-child(2) { height: 70%; animation-delay: 0.1s; }
+.talk-waves span:nth-child(3) { height: 100%; animation-delay: 0.2s; }
+.talk-waves span:nth-child(4) { height: 55%; animation-delay: 0.3s; }
+.talk-waves span:nth-child(5) { height: 25%; animation-delay: 0.4s; }
+
+/* ---------- Modal ---------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.15s ease;
+}
+.modal-sheet {
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-elev);
+  border: 1px solid var(--card-border);
+  border-radius: 24px 24px 0 0;
+  padding: 26px 20px calc(26px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.modal-title { font-size: 18px; font-weight: 700; text-align: center; }
+
+/* ---------- Share row ---------- */
+.share-actions {
+  display: flex;
+  gap: 12px;
+}
+.share-actions .btn { flex: 1; }
+
+/* ---------- Misc ---------- */
+.footer-note {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 10px;
+}
+
+.leave-btn-wrap {
+  margin-top: 6px;
+}
+
+@media (min-width: 480px) {
+  .talk-btn { width: 240px; height: 240px; }
+}
+
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ HOME SCREEN ============ -->
+  <section id="screen-home" class="screen center">
+    <div class="spacer"></div>
+    <div class="logo">WO<span>KI</span></div>
+    <p class="tagline">Talk. Release. Done.</p>
+
+    <div class="spacer"></div>
+
+    <div class="stack" style="width:100%">
+      <button class="btn btn-primary" id="btn-create-room">Create Room</button>
+      <button class="btn btn-secondary" id="btn-join-room">Join Room</button>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="status-pill" id="home-status">
+      <span class="status-dot"></span>
+      <span id="home-status-text">Connecting...</span>
+    </div>
+  </section>
+
+  <!-- ============ NAME SCREEN ============ -->
+  <section id="screen-name" class="screen hidden">
+    <div class="top-bar">
+      <button class="back-btn" data-back="screen-home">←</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="center" style="width:100%">
+      <h2>What's your name?</h2>
+      <p style="margin-top:6px">This is only shown to people in your room.</p>
+    </div>
+    <div class="stack" style="width:100%; margin-top:28px">
+      <input id="input-name" class="field" type="text" placeholder="Enter your name" maxlength="20" autocomplete="off" />
+      <div class="char-count"><span id="name-count">0</span>/20</div>
+      <button class="btn btn-primary" id="btn-name-continue">Continue</button>
+    </div>
+    <div class="spacer"></div>
+  </section>
+
+  <!-- ============ CREATE ROOM SCREEN ============ -->
+  <section id="screen-create" class="screen hidden">
+    <div class="top-bar">
+      <button class="back-btn" data-back="screen-home">←</button>
+    </div>
+    <div class="spacer"></div>
+    <div style="width:100%">
+      <h2 style="margin-bottom:22px">Create a Room</h2>
+      <label class="field-label">Room name</label>
+      <input id="input-room-name" class="field" type="text" placeholder="My Squad" maxlength="30" autocomplete="off" />
+      <button class="btn btn-primary" id="btn-do-create" style="margin-top:22px">Create Room</button>
+    </div>
+    <div class="spacer"></div>
+  </section>
+
+  <!-- ============ ROOM READY SCREEN ============ -->
+  <section id="screen-ready" class="screen hidden">
+    <div class="spacer"></div>
+    <div class="center" style="width:100%">
+      <h2>Your room is ready</h2>
+      <div class="card" style="width:100%; margin-top:22px">
+        <div class="room-name-display" id="ready-room-name">My Squad</div>
+        <div class="code-display" id="ready-room-code">X7K2P</div>
+      </div>
+      <p style="margin-top:18px">Share this code with your friends</p>
+    </div>
+
+    <div class="stack" style="width:100%; margin-top:26px">
+      <div class="share-actions">
+        <button class="btn btn-secondary" id="btn-copy-code">Copy Code</button>
+        <button class="btn btn-secondary" id="btn-share-room">Share Room</button>
+      </div>
+      <button class="btn btn-primary" id="btn-enter-room">Enter Room</button>
+    </div>
+    <div class="spacer"></div>
+  </section>
+
+  <!-- ============ JOIN ROOM SCREEN ============ -->
+  <section id="screen-join" class="screen hidden">
+    <div class="top-bar">
+      <button class="back-btn" data-back="screen-home">←</button>
+    </div>
+    <div class="spacer"></div>
+    <div style="width:100%">
+      <h2 style="margin-bottom:22px">Join a Room</h2>
+      <input id="input-room-code" class="field field-code" type="text" placeholder="CODE" maxlength="8" autocomplete="off" />
+      <button class="btn btn-primary" id="btn-do-join" style="margin-top:22px">Join Room</button>
+    </div>
+    <div class="spacer"></div>
+  </section>
+
+  <!-- ============ WALKIE-TALKIE ROOM SCREEN ============ -->
+  <section id="screen-room" class="screen hidden" style="max-width:520px">
+    <div class="room-header">
+      <div>
+        <div class="room-title" id="room-title">Room</div>
+        <div class="room-sub" id="room-people-count">1 person online</div>
+      </div>
+      <div class="status-pill" id="room-status">
+        <span class="status-dot"></span>
+        <span id="room-status-text">Connected</span>
+      </div>
+    </div>
+
+    <div class="participants" id="participants-list"></div>
+
+    <div class="talk-area">
+      <button class="talk-btn" id="talk-btn">
+        <span class="talk-icon">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M19 11a7 7 0 01-14 0M12 19v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span id="talk-btn-label">HOLD TO TALK</span>
+        <span class="talk-waves">
+          <span></span><span></span><span></span><span></span><span></span>
+        </span>
+      </button>
+      <div class="talk-hint" id="talk-hint">Hold while speaking</div>
+    </div>
+
+    <div class="leave-btn-wrap">
+      <button class="btn btn-danger" id="btn-leave-room">Leave Room</button>
+    </div>
+  </section>
+
+</div>
+
+<!-- ============ LEAVE CONFIRM MODAL ============ -->
+<div id="modal-leave" class="modal-backdrop hidden">
+  <div class="modal-sheet">
+    <div class="modal-title">Leave this room?</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="btn-leave-cancel">Cancel</button>
+      <button class="btn btn-danger" id="btn-leave-confirm" style="background:var(--danger); color:#1a0808;">Leave</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ERROR MODAL ============ -->
+<div id="modal-error" class="modal-backdrop hidden">
+  <div class="modal-sheet center">
+    <div class="modal-title" id="error-title">Couldn't connect</div>
+    <p id="error-message">Check your internet and try again.</p>
+    <button class="btn btn-primary" id="btn-error-ok" style="margin-top:6px">Try Again</button>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+
+/* ===== config.js ===== */
+// config.js
+// Single place to point the frontend at your signaling server and
+// to configure STUN/TURN servers for WebRTC.
+//
+// For local testing the default (localhost:3001) is fine.
+// For production, replace SIGNAL_SERVER_URL with your deployed
+// backend URL (e.g. "https://woki-server.onrender.com").
+
+window.WOKI_CONFIG = {
+  SIGNAL_SERVER_URL: (function () {
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      return "http://localhost:3001";
+    }
+    // TODO: replace with your deployed signaling server URL
+    return "https://YOUR-SIGNALING-SERVER-URL";
+  })(),
+
+  MAX_NAME_LENGTH: 20,
+  MAX_ROOM_NAME_LENGTH: 30,
+
+  // STUN servers help peers discover their public address so they can
+  // connect directly. They carry no audio and cost nothing to use.
+  // To support users on strict/symmetric NATs (many mobile carriers,
+  // corporate wifi) add a TURN server here later, e.g.:
+  //   { urls: "turn:your-turn-server:3478", username: "user", credential: "pass" }
+  ICE_SERVERS: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ],
+};
+
+
+/* ===== ui.js ===== */
+// ui.js
+// Pure DOM helpers. No networking or WebRTC logic lives here.
+
+const UI = (() => {
+  const screens = {};
+  let currentScreenId = null;
+
+  function cacheScreens() {
+    document.querySelectorAll(".screen").forEach((el) => {
+      screens[el.id] = el;
+    });
+  }
+
+  function showScreen(id) {
+    Object.values(screens).forEach((el) => el.classList.add("hidden"));
+    if (screens[id]) {
+      screens[id].classList.remove("hidden");
+      currentScreenId = id;
+      window.scrollTo(0, 0);
+    }
+  }
+
+  function getScreen() {
+    return currentScreenId;
+  }
+
+  function $(id) {
+    return document.getElementById(id);
+  }
+
+  function setStatus(pillId, textId, state, label) {
+    const pill = $(pillId);
+    const text = $(textId);
+    if (!pill || !text) return;
+    pill.classList.remove("connected", "connecting", "reconnecting", "disconnected");
+    pill.classList.add(state);
+    text.textContent = label;
+  }
+
+  function toast(message, duration = 3200) {
+    const container = $("toast-container");
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.textContent = message;
+    container.appendChild(el);
+    setTimeout(() => {
+      el.style.transition = "opacity 0.2s ease";
+      el.style.opacity = "0";
+      setTimeout(() => el.remove(), 200);
+    }, duration);
+  }
+
+  function showErrorModal(message, title = "Couldn't connect") {
+    $("error-title").textContent = title;
+    $("error-message").textContent = message;
+    $("modal-error").classList.remove("hidden");
+  }
+
+  function hideErrorModal() {
+    $("modal-error").classList.add("hidden");
+  }
+
+  function showLeaveModal() {
+    $("modal-leave").classList.remove("hidden");
+  }
+
+  function hideLeaveModal() {
+    $("modal-leave").classList.add("hidden");
+  }
+
+  function initials(name) {
+    if (!name) return "?";
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  function renderParticipants(participants, selfId, speakingIds) {
+    const list = $("participants-list");
+    list.innerHTML = "";
+    participants.forEach((p) => {
+      const isSelf = p.id === selfId;
+      const isSpeaking = speakingIds.has(p.id);
+
+      const row = document.createElement("div");
+      row.className = "participant" + (isSpeaking ? " speaking" : "");
+      row.dataset.id = p.id;
+
+      row.innerHTML = `
+        <div class="avatar">${initials(p.name)}</div>
+        <div class="participant-name">${escapeHtml(p.name)}${isSelf ? ' <span class="participant-you">(You)</span>' : ""}</div>
+        <div class="mini-wave"><span></span><span></span><span></span></div>
+      `;
+      list.appendChild(row);
+    });
+
+    $("room-people-count").textContent =
+      participants.length === 1 ? "1 person online" : `${participants.length} people online`;
+  }
+
+  function setParticipantSpeaking(id, speaking) {
+    const row = document.querySelector(`.participant[data-id="${cssEscape(id)}"]`);
+    if (row) row.classList.toggle("speaking", speaking);
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function cssEscape(str) {
+    return String(str).replace(/["\\]/g, "\\$&");
+  }
+
+  function setTalkButtonState(active, hintText) {
+    const btn = $("talk-btn");
+    const label = $("talk-btn-label");
+    btn.classList.toggle("active", active);
+    label.textContent = active ? "TRANSMITTING" : "HOLD TO TALK";
+    $("talk-hint").textContent = hintText || (active ? "Release to stop" : "Hold while speaking");
+  }
+
+  function setTalkButtonLocked(locked, hintText) {
+    const btn = $("talk-btn");
+    btn.classList.toggle("locked", locked);
+    if (hintText) $("talk-hint").textContent = hintText;
+  }
+
+  return {
+    cacheScreens,
+    showScreen,
+    getScreen,
+    $,
+    setStatus,
+    toast,
+    showErrorModal,
+    hideErrorModal,
+    showLeaveModal,
+    hideLeaveModal,
+    renderParticipants,
+    setParticipantSpeaking,
+    setTalkButtonState,
+    setTalkButtonLocked,
+    initials,
+  };
+})();
+
+
+/* ===== webrtc.js ===== */
+// webrtc.js
+// Handles microphone access and the WebRTC mesh (one RTCPeerConnection
+// per remote participant). Rooms are capped at a small size (see
+// roomManager.js on the server) so a full mesh is fine for the MVP.
+//
+// Audio never touches the signaling server - only offer/answer/ICE
+// candidate text is relayed through Socket.IO. Voice itself flows
+// directly between browsers (peer-to-peer) once connected.
+
+const WokiRTC = (() => {
+  let socket = null;
+  let localStream = null;
+  let selfId = null;
+  const peers = new Map(); // peerId -> { pc, audioEl }
+
+  let handlers = {
+    onLocalStreamError: () => {},
+    onPeerConnectionStateChange: () => {},
+  };
+
+  function init(socketInstance, handlerOverrides = {}) {
+    socket = socketInstance;
+    handlers = { ...handlers, ...handlerOverrides };
+    selfId = socket.id;
+
+    socket.on("signal", async ({ from, data }) => {
+      await handleSignal(from, data);
+    });
+  }
+
+  function updateSelfId() {
+    selfId = socket.id;
+  }
+
+  async function requestMicrophone() {
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      // Muted by default - push-to-talk enables it only while held.
+      localStream.getAudioTracks().forEach((t) => (t.enabled = false));
+      return { ok: true };
+    } catch (err) {
+      let message = "Couldn't access your microphone. Check your internet and try again.";
+      if (err && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError")) {
+        message = "Microphone permission was denied. Allow microphone access to talk.";
+      } else if (err && err.name === "NotFoundError") {
+        message = "No microphone was found on this device.";
+      }
+      return { ok: false, error: message };
+    }
+  }
+
+  function createPeerConnection(peerId) {
+    const pc = new RTCPeerConnection({ iceServers: window.WOKI_CONFIG.ICE_SERVERS });
+
+    if (localStream) {
+      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+    }
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("signal", {
+          to: peerId,
+          data: { type: "candidate", candidate: event.candidate },
+        });
+      }
+    };
+
+    pc.ontrack = (event) => {
+      let audioEl = document.getElementById(`audio-${peerId}`);
+      if (!audioEl) {
+        audioEl = document.createElement("audio");
+        audioEl.id = `audio-${peerId}`;
+        audioEl.autoplay = true;
+        audioEl.playsInline = true;
+        document.body.appendChild(audioEl);
+      }
+      audioEl.srcObject = event.streams[0];
+      audioEl.play().catch(() => {
+        // Autoplay can be blocked until the user has interacted with the
+        // page once - the Create/Join/Talk button tap satisfies that.
+      });
+    };
+
+    pc.onconnectionstatechange = () => {
+      handlers.onPeerConnectionStateChange(peerId, pc.connectionState);
+      if (["failed", "closed"].includes(pc.connectionState)) {
+        // leave cleanup to removePeer / caller-driven retry
+      }
+    };
+
+    peers.set(peerId, { pc });
+    return pc;
+  }
+
+  async function connectToNewPeer(peerId) {
+    // Called by the peer who just joined - it initiates the offer.
+    const pc = createPeerConnection(peerId);
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit("signal", { to: peerId, data: { type: "offer", sdp: offer } });
+    } catch (err) {
+      handlers.onPeerConnectionStateChange(peerId, "failed");
+    }
+  }
+
+  function prepareForPeer(peerId) {
+    // Called by existing participants when someone new joins - they wait
+    // for the incoming offer, so just make sure a connection slot exists.
+    if (!peers.has(peerId)) {
+      createPeerConnection(peerId);
+    }
+  }
+
+  async function handleSignal(from, data) {
+    let entry = peers.get(from);
+    let pc = entry ? entry.pc : createPeerConnection(from);
+
+    try {
+      if (data.type === "offer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("signal", { to: from, data: { type: "answer", sdp: answer } });
+      } else if (data.type === "answer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      } else if (data.type === "candidate") {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+          // benign if it arrives before remote description is set in rare races
+        }
+      }
+    } catch (err) {
+      handlers.onPeerConnectionStateChange(from, "failed");
+    }
+  }
+
+  function removePeer(peerId) {
+    const entry = peers.get(peerId);
+    if (entry) {
+      entry.pc.close();
+      peers.delete(peerId);
+    }
+    const audioEl = document.getElementById(`audio-${peerId}`);
+    if (audioEl) audioEl.remove();
+  }
+
+  function removeAllPeers() {
+    Array.from(peers.keys()).forEach(removePeer);
+  }
+
+  function setTransmitting(isTransmitting) {
+    if (!localStream) return;
+    localStream.getAudioTracks().forEach((t) => (t.enabled = isTransmitting));
+  }
+
+  function stopLocalStream() {
+    if (localStream) {
+      localStream.getTracks().forEach((t) => t.stop());
+      localStream = null;
+    }
+  }
+
+  return {
+    init,
+    updateSelfId,
+    requestMicrophone,
+    connectToNewPeer,
+    prepareForPeer,
+    handleSignal,
+    removePeer,
+    removeAllPeers,
+    setTransmitting,
+    stopLocalStream,
+  };
+})();
+
+
+/* ===== app.js ===== */
+// app.js
+// Ties together UI, Socket.IO signaling, and WebRTC into the Woki flow:
+// Home -> Name -> Create/Join -> Room -> Talk.
+
+(function () {
+  const state = {
+    userName: localStorage.getItem("woki_name") || "",
+    pendingAction: null, // "create" | "join"
+    roomCode: null,
+    roomName: null,
+    participants: [], // [{id, name}]
+    speakingIds: new Set(),
+    selfId: null,
+    isTransmitting: false,
+    micReady: false,
+    roomJoined: false,
+  };
+
+  let socket = null;
+
+  // ---------------- Boot ----------------
+  document.addEventListener("DOMContentLoaded", () => {
+    UI.cacheScreens();
+    UI.showScreen("screen-home");
+    wireStaticEvents();
+    connectSocket();
+    registerServiceWorker();
+  });
+
+  function registerServiceWorker() {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js").catch(() => {
+        // PWA install just won't be available - the site still works fine.
+      });
+    }
+  }
+
+  function connectSocket() {
+    UI.setStatus("home-status", "home-status-text", "connecting", "Connecting...");
+    socket = io(window.WOKI_CONFIG.SIGNAL_SERVER_URL, {
+      transports: ["websocket", "polling"],
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+
+    socket.on("connect", () => {
+      state.selfId = socket.id;
+      UI.setStatus("home-status", "home-status-text", "connected", "Internet connected");
+      if (UI.getScreen() === "screen-room") {
+        UI.setStatus("room-status", "room-status-text", "connected", "Connected");
+      }
+      WokiRTC.updateSelfId();
+    });
+
+    socket.on("disconnect", () => {
+      UI.setStatus("home-status", "home-status-text", "disconnected", "Connection lost");
+      if (UI.getScreen() === "screen-room") {
+        UI.setStatus("room-status", "room-status-text", "disconnected", "Connection lost");
+        stopTransmittingLocal();
+      }
+    });
+
+    socket.io.on("reconnect_attempt", () => {
+      UI.setStatus("home-status", "home-status-text", "reconnecting", "Reconnecting...");
+      if (UI.getScreen() === "screen-room") {
+        UI.setStatus("room-status", "room-status-text", "reconnecting", "Reconnecting...");
+      }
+    });
+
+    socket.io.on("reconnect", () => {
+      // Rejoin the room automatically after a dropped connection.
+      if (state.roomJoined && state.roomCode) {
+        rejoinRoomAfterReconnect();
+      }
+    });
+
+    socket.on("room-update", ({ participants }) => {
+      state.participants = participants;
+      UI.renderParticipants(participants, state.selfId, state.speakingIds);
+    });
+
+    socket.on("peer-joined", ({ id, name }) => {
+      UI.toast(`${name} joined`);
+      WokiRTC.prepareForPeer(id);
+    });
+
+    socket.on("peer-left", ({ id }) => {
+      WokiRTC.removePeer(id);
+      state.speakingIds.delete(id);
+    });
+
+    socket.on("speaker-start", ({ id, name }) => {
+      state.speakingIds.add(id);
+      UI.setParticipantSpeaking(id, true);
+    });
+
+    socket.on("speaker-stop", ({ id }) => {
+      state.speakingIds.delete(id);
+      UI.setParticipantSpeaking(id, false);
+    });
+
+    WokiRTC.init(socket, {
+      onPeerConnectionStateChange: (peerId, connState) => {
+        if (connState === "failed") {
+          UI.toast("Connection to a participant failed.");
+        }
+      },
+    });
+  }
+
+  function rejoinRoomAfterReconnect() {
+    socket.emit(
+      "join-room",
+      { roomCode: state.roomCode, userName: state.userName },
+      (res) => {
+        if (!res.ok) {
+          UI.showErrorModal("This room is no longer available.", "Room ended");
+          leaveRoomCleanup();
+          UI.showScreen("screen-home");
+          return;
+        }
+        state.participants = res.participants;
+        UI.renderParticipants(res.participants, state.selfId, state.speakingIds);
+        connectToAllExisting(res.existingParticipants || []);
+        UI.setStatus("room-status", "room-status-text", "connected", "Connected");
+      }
+    );
+  }
+
+  // ---------------- Static UI wiring ----------------
+  function wireStaticEvents() {
+    UI.$("btn-create-room").addEventListener("click", () => goToName("create"));
+    UI.$("btn-join-room").addEventListener("click", () => goToName("join"));
+
+    document.querySelectorAll("[data-back]").forEach((btn) => {
+      btn.addEventListener("click", () => UI.showScreen(btn.dataset.back));
+    });
+
+    const nameInput = UI.$("input-name");
+    nameInput.addEventListener("input", () => {
+      UI.$("name-count").textContent = nameInput.value.length;
+    });
+    UI.$("btn-name-continue").addEventListener("click", submitName);
+    nameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submitName();
+    });
+
+    UI.$("btn-do-create").addEventListener("click", doCreateRoom);
+    UI.$("input-room-name").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doCreateRoom();
+    });
+
+    const codeInput = UI.$("input-room-code");
+    codeInput.addEventListener("input", () => {
+      codeInput.value = codeInput.value.toUpperCase().replace(/\s/g, "");
+    });
+    codeInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doJoinRoom();
+    });
+    UI.$("btn-do-join").addEventListener("click", doJoinRoom);
+
+    UI.$("btn-copy-code").addEventListener("click", copyRoomCode);
+    UI.$("btn-share-room").addEventListener("click", shareRoom);
+    UI.$("btn-enter-room").addEventListener("click", enterRoom);
+
+    UI.$("btn-leave-room").addEventListener("click", () => UI.showLeaveModal());
+    UI.$("btn-leave-cancel").addEventListener("click", () => UI.hideLeaveModal());
+    UI.$("btn-leave-confirm").addEventListener("click", () => {
+      UI.hideLeaveModal();
+      doLeaveRoom();
+    });
+
+    UI.$("btn-error-ok").addEventListener("click", () => UI.hideErrorModal());
+
+    wireTalkButton();
+
+    // Prevent a stuck "transmitting" state if the user backgrounds the tab
+    // or the page is about to unload.
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopTransmittingLocal();
+    });
+    window.addEventListener("blur", stopTransmittingLocal);
+    window.addEventListener("pagehide", () => {
+      if (state.roomJoined) socket.emit("leave-room");
+    });
+    window.addEventListener("beforeunload", () => {
+      if (state.roomJoined) socket.emit("leave-room");
+    });
+  }
+
+  function goToName(action) {
+    state.pendingAction = action;
+    UI.$("input-name").value = state.userName;
+    UI.$("name-count").textContent = state.userName.length;
+    UI.showScreen("screen-name");
+    setTimeout(() => UI.$("input-name").focus(), 200);
+  }
+
+  function submitName() {
+    const name = UI.$("input-name").value.trim().slice(0, window.WOKI_CONFIG.MAX_NAME_LENGTH);
+    if (!name) {
+      UI.toast("Enter your name to continue.");
+      return;
+    }
+    state.userName = name;
+    localStorage.setItem("woki_name", name);
+
+    if (state.pendingAction === "create") {
+      UI.showScreen("screen-create");
+      setTimeout(() => UI.$("input-room-name").focus(), 200);
+    } else {
+      UI.showScreen("screen-join");
+      setTimeout(() => UI.$("input-room-code").focus(), 200);
+    }
+  }
+
+  // ---------------- Create room ----------------
+  function doCreateRoom() {
+    const roomName = UI.$("input-room-name").value.trim() || "Squad";
+    const btn = UI.$("btn-do-create");
+    btn.disabled = true;
+
+    if (!socket.connected) {
+      btn.disabled = false;
+      UI.showErrorModal("Check your internet and try again.");
+      return;
+    }
+
+    socket.emit("create-room", { roomName, userName: state.userName }, (res) => {
+      btn.disabled = false;
+      if (!res.ok) {
+        UI.showErrorModal(res.error || "Couldn't create the room. Try again.");
+        return;
+      }
+      state.roomCode = res.roomCode;
+      state.roomName = res.roomName;
+      state.participants = res.participants;
+
+      UI.$("ready-room-name").textContent = res.roomName;
+      UI.$("ready-room-code").textContent = res.roomCode;
+      UI.showScreen("screen-ready");
+    });
+  }
+
+  function copyRoomCode() {
+    navigator.clipboard
+      .writeText(state.roomCode)
+      .then(() => UI.toast("Code copied"))
+      .catch(() => UI.toast(state.roomCode));
+  }
+
+  function shareRoom() {
+    const text = `Join my Woki room "${state.roomName}" — code: ${state.roomCode}`;
+    if (navigator.share) {
+      navigator.share({ title: "Join me on Woki", text }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(text).then(() => UI.toast("Invite copied to clipboard"));
+    }
+  }
+
+  function enterRoom() {
+    joinRoomFlow({ alreadyCreated: true });
+  }
+
+  // ---------------- Join room ----------------
+  function doJoinRoom() {
+    const code = UI.$("input-room-code").value.trim().toUpperCase();
+    if (!code) {
+      UI.toast("Enter a room code.");
+      return;
+    }
+    state.roomCode = code;
+    joinRoomFlow({ alreadyCreated: false });
+  }
+
+  async function joinRoomFlow({ alreadyCreated }) {
+    if (!socket.connected) {
+      UI.showErrorModal("Check your internet and try again.");
+      return;
+    }
+
+    // Ask for the microphone before entering so the talk button works
+    // immediately once inside the room.
+    const mic = await WokiRTC.requestMicrophone();
+    if (!mic.ok) {
+      UI.showErrorModal(mic.error, "Microphone needed");
+      return;
+    }
+    state.micReady = true;
+
+    if (alreadyCreated) {
+      // We already created + joined the room server-side on create-room.
+      enterRoomScreen(state.roomName, state.participants, []);
+      return;
+    }
+
+    socket.emit("join-room", { roomCode: state.roomCode, userName: state.userName }, (res) => {
+      if (!res.ok) {
+        UI.showErrorModal(res.error || "Couldn't join the room.", "Couldn't join");
+        return;
+      }
+      state.roomCode = res.roomCode;
+      state.roomName = res.roomName;
+      state.participants = res.participants;
+      enterRoomScreen(res.roomName, res.participants, res.existingParticipants || []);
+    });
+  }
+
+  function enterRoomScreen(roomName, participants, existingParticipants) {
+    state.roomJoined = true;
+    state.speakingIds = new Set();
+
+    UI.$("room-title").textContent = roomName;
+    UI.renderParticipants(participants, state.selfId, state.speakingIds);
+    UI.setStatus("room-status", "room-status-text", "connected", "Connected");
+    UI.setTalkButtonState(false);
+    UI.showScreen("screen-room");
+
+    connectToAllExisting(existingParticipants);
+  }
+
+  function connectToAllExisting(existingParticipants) {
+    existingParticipants.forEach((p) => {
+      WokiRTC.connectToNewPeer(p.id);
+    });
+  }
+
+  // ---------------- Leave room ----------------
+  function doLeaveRoom() {
+    leaveRoomCleanup();
+    UI.showScreen("screen-home");
+  }
+
+  function leaveRoomCleanup() {
+    stopTransmittingLocal();
+    if (socket && socket.connected) socket.emit("leave-room");
+    WokiRTC.removeAllPeers();
+    WokiRTC.stopLocalStream();
+    state.roomJoined = false;
+    state.roomCode = null;
+    state.roomName = null;
+    state.participants = [];
+    state.speakingIds = new Set();
+    state.micReady = false;
+  }
+
+  // ---------------- Push to talk ----------------
+  function wireTalkButton() {
+    const btn = UI.$("talk-btn");
+
+    const start = (e) => {
+      e.preventDefault();
+      startTransmitting();
+    };
+    const stop = (e) => {
+      if (e) e.preventDefault();
+      stopTransmittingLocal();
+    };
+
+    btn.addEventListener("pointerdown", start);
+    btn.addEventListener("pointerup", stop);
+    btn.addEventListener("pointercancel", stop);
+    btn.addEventListener("pointerleave", stop);
+    // Fallback for older browsers without full Pointer Events support
+    btn.addEventListener("touchstart", start, { passive: false });
+    btn.addEventListener("touchend", stop);
+    btn.addEventListener("touchcancel", stop);
+  }
+
+  function startTransmitting() {
+    if (state.isTransmitting) return;
+    if (!state.micReady) {
+      UI.toast("Microphone isn't ready yet.");
+      return;
+    }
+    if (!socket.connected) {
+      UI.toast("No connection. Check your internet.");
+      return;
+    }
+
+    socket.emit("talk-start", null, (res) => {
+      if (!res || !res.ok) {
+        UI.setTalkButtonLocked(true, res && res.error ? res.error : "Someone else is talking");
+        setTimeout(() => UI.setTalkButtonLocked(false, "Hold while speaking"), 1200);
+        return;
+      }
+      state.isTransmitting = true;
+      WokiRTC.setTransmitting(true);
+      UI.setTalkButtonState(true);
+    });
+  }
+
+  function stopTransmittingLocal() {
+    if (!state.isTransmitting) return;
+    state.isTransmitting = false;
+    WokiRTC.setTransmitting(false);
+    UI.setTalkButtonState(false);
+    if (socket && socket.connected) socket.emit("talk-stop");
+  }
+})();
+
+</script>
+</body>
+</html>
