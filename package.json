@@ -1,0 +1,11 @@
+{
+  "name": "woki",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Woki - a simple internet walkie-talkie. Create or join a room and talk with push-to-talk voice.",
+  "scripts": {
+    "install:server": "npm install --prefix server",
+    "start:server": "npm start --prefix server",
+    "serve:client": "npx serve client -l 5500"
+  }
+}
