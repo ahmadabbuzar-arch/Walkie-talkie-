@@ -1,21 +1,45 @@
 // server.js
-// Woki signaling server: handles room create/join and relays WebRTC
-// offers/answers/ICE candidates between peers. No audio ever passes
-// through this server - it only exchanges the small text messages
-// needed to set up a direct peer-to-peer WebRTC connection.
+// Woki signaling server. Handles two ways to get into a call:
+//   1) Room code (create/join) - unchanged group-call flow.
+//   2) Direct number-to-number calling with real ringing, including
+//      push notifications so the callee's phone can ring even if the
+//      Woki tab/app isn't open.
+//
+// No audio ever passes through this server - it only exchanges the
+// small text messages needed to set up a direct peer-to-peer WebRTC
+// connection, plus the tiny "someone is calling you" signal.
 
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
+const webpush = require("web-push");
 const { Server } = require("socket.io");
 const roomManager = require("./roomManager");
+const userDirectory = require("./userDirectory");
 
 const PORT = process.env.PORT || 3001;
 const CLIENT_ORIGINS = (process.env.CLIENT_ORIGIN || "*")
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
+
+const RING_TIMEOUT_MS = 30000; // how long a call rings before "no answer"
+const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
+
+// ---------------- Web Push setup ----------------
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:support@example.com";
+const pushEnabled = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+
+if (pushEnabled) {
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.warn(
+    "VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY not set - calls will only ring while the callee's app is open (no background push). See README for setup."
+  );
+}
 
 const app = express();
 app.use(cors({ origin: CLIENT_ORIGINS.length ? CLIENT_ORIGINS : "*" }));
@@ -27,6 +51,12 @@ app.get("/", (req, res) => {
 
 app.get("/health", (req, res) => {
   res.json({ status: "healthy", uptime: process.uptime() });
+});
+
+// Lets the client fetch the VAPID public key without hardcoding it,
+// so the server's .env is the single source of truth for it.
+app.get("/api/vapid-public-key", (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
 const server = http.createServer(app);
@@ -43,8 +73,149 @@ function broadcastParticipants(roomCode) {
   });
 }
 
+/** roomCode -> { callerSocketId, callerPhone, callerName, targetPhone, timeout } */
+const pendingCalls = new Map();
+
+function getSocketById(socketId) {
+  return socketId ? io.sockets.sockets.get(socketId) : null;
+}
+
+async function ringTarget(targetRecord, payload) {
+  // Prefer waking them up in-app if they're currently connected.
+  const targetSocket = getSocketById(targetRecord.socketId);
+  if (targetSocket) {
+    targetSocket.emit("incoming-call", payload);
+    return "socket";
+  }
+  // Otherwise fall back to a background push notification, if they've
+  // granted permission and we have VAPID keys configured.
+  if (pushEnabled && targetRecord.pushSubscription) {
+    try {
+      await webpush.sendNotification(
+        targetRecord.pushSubscription,
+        JSON.stringify({ type: "incoming-call", ...payload, respondUrl: `${PUBLIC_URL}/api/call-response` })
+      );
+      return "push";
+    } catch (err) {
+      // Subscription is likely stale/expired - drop it so we don't keep
+      // failing on every future call to this number.
+      userDirectory.clearPushSubscription(targetRecord.phone);
+      return "unreachable";
+    }
+  }
+  return "unreachable";
+}
+
+function endPendingCall(roomCode) {
+  const pending = pendingCalls.get(roomCode);
+  if (!pending) return null;
+  clearTimeout(pending.timeout);
+  pendingCalls.delete(roomCode);
+  return pending;
+}
+
+/** Shared by the Socket.IO 'call-response' event and the HTTP fallback
+ * used by the service worker's "Decline" notification action (which can
+ * fire with no page/socket open at all). */
+function handleCallResponse(roomCode, accepted) {
+  const pending = endPendingCall(roomCode);
+  if (!pending) return;
+
+  if (!accepted) {
+    const callerSocket = getSocketById(pending.callerSocketId);
+    if (callerSocket) callerSocket.emit("call-rejected", { roomCode });
+  }
+  // If accepted, the callee joins normally via "join-room" - see there.
+}
+
 io.on("connection", (socket) => {
-  // ----- CREATE ROOM -----
+  // ----- REGISTER (simple phone-number "login", no OTP) -----
+  socket.on("register", ({ phone, name }, callback) => {
+    const cb = typeof callback === "function" ? callback : () => {};
+    const cleanName = userDirectory.sanitizeName(name);
+    const cleanPhone = userDirectory.sanitizePhone(phone);
+    if (!cleanPhone) return cb({ ok: false, error: "Enter a valid phone number." });
+    if (!cleanName) return cb({ ok: false, error: "Enter your name to continue." });
+
+    userDirectory.register(cleanPhone, cleanName, socket.id);
+    socket.data.phone = cleanPhone;
+    socket.data.userName = cleanName;
+    cb({ ok: true, phone: cleanPhone, name: cleanName });
+  });
+
+  // ----- SAVE PUSH SUBSCRIPTION (so this number can be called while the app is closed) -----
+  socket.on("save-push-subscription", ({ phone, subscription }) => {
+    try {
+      userDirectory.savePushSubscription(phone, subscription);
+    } catch (err) {
+      // Non-critical - in-app ringing still works without this.
+    }
+  });
+
+  // ----- CALL A PHONE NUMBER DIRECTLY -----
+  socket.on("call-user", ({ toPhone }, callback) => {
+    const cb = typeof callback === "function" ? callback : () => {};
+    const callerPhone = socket.data.phone;
+    const callerName = socket.data.userName;
+
+    if (!callerPhone) return cb({ ok: false, error: "Log in with your number first." });
+
+    const cleanTarget = userDirectory.sanitizePhone(toPhone);
+    if (!cleanTarget) return cb({ ok: false, error: "Enter a valid phone number." });
+    if (cleanTarget === callerPhone) return cb({ ok: false, error: "You can't call yourself." });
+
+    const targetRecord = userDirectory.getByPhone(cleanTarget);
+    if (!targetRecord) {
+      return cb({ ok: false, error: "That number hasn't used Woki yet." });
+    }
+
+    const roomCode = roomManager.createRoom(`${callerName}'s call`);
+    roomManager.addParticipant(roomCode, socket.id, callerName);
+    socket.join(roomCode);
+    socket.data.roomCode = roomCode;
+
+    const timeout = setTimeout(() => {
+      const pending = endPendingCall(roomCode);
+      if (!pending) return;
+      const callerSocket = getSocketById(pending.callerSocketId);
+      if (callerSocket) callerSocket.emit("call-no-answer", { roomCode });
+      const targetSocket = getSocketById(targetRecord.socketId);
+      if (targetSocket) targetSocket.emit("call-cancelled", { roomCode });
+    }, RING_TIMEOUT_MS);
+
+    pendingCalls.set(roomCode, {
+      callerSocketId: socket.id,
+      callerPhone,
+      callerName,
+      targetPhone: cleanTarget,
+      timeout,
+    });
+
+    ringTarget(targetRecord, { roomCode, callerName, callerPhone }).then((how) => {
+      if (how === "unreachable") {
+        endPendingCall(roomCode);
+        cb({ ok: false, error: "That number can't be reached right now." });
+      } else {
+        cb({ ok: true, roomCode, ringingVia: how });
+      }
+    });
+  });
+
+  // ----- ACCEPT / DECLINE (decline while the app is open; accept = join-room) -----
+  socket.on("call-response", ({ roomCode, accepted }) => {
+    handleCallResponse(roomCode, accepted);
+  });
+
+  // ----- CANCEL AN OUTGOING CALL BEFORE IT'S ANSWERED -----
+  socket.on("cancel-call", ({ roomCode }) => {
+    const pending = endPendingCall(roomCode);
+    if (!pending || pending.callerSocketId !== socket.id) return;
+    const targetRecord = userDirectory.getByPhone(pending.targetPhone);
+    const targetSocket = targetRecord && getSocketById(targetRecord.socketId);
+    if (targetSocket) targetSocket.emit("call-cancelled", { roomCode });
+  });
+
+  // ----- CREATE ROOM (group calls via room code) -----
   socket.on("create-room", ({ roomName, userName }, callback) => {
     try {
       const name = roomManager.sanitizeName(userName);
@@ -70,11 +241,11 @@ io.on("connection", (socket) => {
     }
   });
 
-  // ----- JOIN ROOM -----
+  // ----- JOIN ROOM (also how an accepted direct call is "picked up") -----
   socket.on("join-room", ({ roomCode, userName }, callback) => {
     try {
       const code = (roomCode || "").trim().toUpperCase();
-      const name = roomManager.sanitizeName(userName);
+      const name = roomManager.sanitizeName(userName) || socket.data.userName;
 
       if (!name) {
         return callback({ ok: false, error: "Enter your name to continue." });
@@ -113,6 +284,14 @@ io.on("connection", (socket) => {
       // tell everyone already in the room that a new peer has arrived
       socket.to(code).emit("peer-joined", { id: socket.id, name });
       broadcastParticipants(code);
+
+      // If this join was actually someone answering a direct call, let the
+      // caller know their "ringing..." screen can turn into a live call.
+      const pending = endPendingCall(code);
+      if (pending) {
+        const callerSocket = getSocketById(pending.callerSocketId);
+        if (callerSocket) callerSocket.emit("call-accepted", { roomCode: code });
+      }
     } catch (err) {
       callback({ ok: false, error: "Couldn't join the room. Try again." });
     }
@@ -129,30 +308,38 @@ io.on("connection", (socket) => {
     io.to(to).emit("signal", { from: socket.id, data });
   });
 
-  // ----- PUSH TO TALK -----
-  socket.on("talk-start", (_, callback) => {
+  // ----- SPEAKING INDICATOR (UI hint only, not exclusive) -----
+  socket.on("speaking-start", () => {
     const roomCode = socket.data.roomCode;
-    const cb = typeof callback === "function" ? callback : () => {};
-    if (!roomCode) return cb({ ok: false });
-
-    const granted = roomManager.setSpeaker(roomCode, socket.id);
-    if (!granted) {
-      const speakerName = roomManager.getSpeakerName(roomCode);
-      return cb({ ok: false, error: speakerName ? `${speakerName} is talking` : "Someone else is talking" });
-    }
-    cb({ ok: true });
+    if (!roomCode) return;
     socket.to(roomCode).emit("speaker-start", { id: socket.id, name: socket.data.userName });
   });
 
-  socket.on("talk-stop", () => {
+  socket.on("speaking-stop", () => {
     const roomCode = socket.data.roomCode;
     if (!roomCode) return;
-    roomManager.clearSpeaker(roomCode, socket.id);
     socket.to(roomCode).emit("speaker-stop", { id: socket.id });
+  });
+
+  // ----- MUTE / UNMUTE (for participant list UI only) -----
+  socket.on("mute-changed", ({ muted }) => {
+    const roomCode = socket.data.roomCode;
+    if (!roomCode) return;
+    socket.to(roomCode).emit("peer-mute-changed", { id: socket.id, muted: !!muted });
   });
 
   // ----- DISCONNECT -----
   socket.on("disconnect", () => {
+    // Cancel any call this socket was ringing out that never got answered.
+    for (const [roomCode, pending] of pendingCalls.entries()) {
+      if (pending.callerSocketId === socket.id) {
+        endPendingCall(roomCode);
+        const targetRecord = userDirectory.getByPhone(pending.targetPhone);
+        const targetSocket = targetRecord && getSocketById(targetRecord.socketId);
+        if (targetSocket) targetSocket.emit("call-cancelled", { roomCode });
+      }
+    }
+    userDirectory.markOffline(socket.id);
     handleLeave(socket);
   });
 
@@ -160,7 +347,6 @@ io.on("connection", (socket) => {
     const roomCode = socket.data.roomCode;
     if (!roomCode) return;
 
-    roomManager.clearSpeaker(roomCode, socket.id);
     roomManager.removeParticipant(roomCode, socket.id);
 
     socket.to(roomCode).emit("peer-left", { id: socket.id });
@@ -175,6 +361,18 @@ io.on("connection", (socket) => {
   }
 });
 
+// HTTP fallback for the "Decline" action on a background push notification,
+// where there may be no open page/socket to send a Decline through at all.
+app.post("/api/call-response", (req, res) => {
+  const { roomCode, accepted } = req.body || {};
+  if (!roomCode) return res.status(400).json({ ok: false, error: "roomCode required" });
+  handleCallResponse(roomCode, Boolean(accepted));
+  res.json({ ok: true });
+});
+
 server.listen(PORT, () => {
   console.log(`Woki signaling server running on port ${PORT}`);
+  if (!pushEnabled) {
+    console.log("Push notifications are OFF. Set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY to enable ringing while the app is closed.");
+  }
 });
