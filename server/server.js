@@ -41,6 +41,63 @@ if (pushEnabled) {
   );
 }
 
+// ---------------- OneSignal setup (real background ringing for the APK) ----------------
+// Plain Web Push (above) can't wake a fully-closed AppMint-built APK -
+// that needs OneSignal + Firebase Cloud Messaging, which AppMint bridges
+// natively into the app shell. This is entirely optional; the app still
+// works (with in-app-only ringing) if these aren't set.
+const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || "";
+const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY || "";
+const oneSignalEnabled = Boolean(ONESIGNAL_APP_ID && ONESIGNAL_REST_API_KEY);
+// The origin OneSignal should open when the notification is tapped -
+// this reuses the same "?join=CODE&autoAnswer=1" deep link our own Web
+// Push notifications already use, so the same client-side logic answers it.
+const APP_ORIGIN = CLIENT_ORIGINS[0] || "";
+
+if (!oneSignalEnabled) {
+  console.warn(
+    "ONESIGNAL_APP_ID / ONESIGNAL_REST_API_KEY not set - the AppMint APK will only ring while it's actually open. See README for setup."
+  );
+}
+
+async function sendOneSignalPush(targetRecord, { roomCode, callerName }) {
+  const joinUrl = `${APP_ORIGIN}/?join=${encodeURIComponent(roomCode)}&autoAnswer=1`;
+
+  // Target by External ID (the phone number, set client-side via
+  // OneSignal.login()) first - this is the robust path inside a
+  // WebView-wrapped APK. Fall back to a raw subscription id if we
+  // happened to capture one and no external id match is expected to work.
+  const body = {
+    app_id: ONESIGNAL_APP_ID,
+    headings: { en: `${callerName || "Someone"} is calling` },
+    contents: { en: "Tap to answer on Woki" },
+    url: joinUrl,
+    android_visibility: 1,
+    priority: 10,
+    ttl: 30,
+  };
+  if (targetRecord.oneSignalId) {
+    body.include_subscription_ids = [targetRecord.oneSignalId];
+  } else {
+    body.include_aliases = { external_id: [targetRecord.phone] };
+    body.target_channel = "push";
+  }
+
+  const res = await fetch("https://onesignal.com/api/v1/notifications", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Basic ${ONESIGNAL_REST_API_KEY}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`OneSignal push failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
 const app = express();
 app.use(cors({ origin: CLIENT_ORIGINS.length ? CLIENT_ORIGINS : "*" }));
 app.use(express.json());
@@ -87,8 +144,22 @@ async function ringTarget(targetRecord, payload) {
     targetSocket.emit("incoming-call", payload);
     return "socket";
   }
-  // Otherwise fall back to a background push notification, if they've
-  // granted permission and we have VAPID keys configured.
+
+  // Otherwise, try OneSignal first - this is the one that can wake a
+  // fully-closed AppMint APK via Firebase Cloud Messaging. Targeting by
+  // External ID (phone number) doesn't require us to have captured any
+  // subscription id at all.
+  if (oneSignalEnabled) {
+    try {
+      await sendOneSignalPush(targetRecord, payload);
+      return "onesignal";
+    } catch (err) {
+      // Fall through and try plain Web Push instead.
+    }
+  }
+
+  // Plain Web Push - works while a browser tab/PWA is open in the
+  // background, but generally can't wake a fully-closed native APK.
   if (pushEnabled && targetRecord.pushSubscription) {
     try {
       await webpush.sendNotification(
@@ -100,9 +171,9 @@ async function ringTarget(targetRecord, payload) {
       // Subscription is likely stale/expired - drop it so we don't keep
       // failing on every future call to this number.
       userDirectory.clearPushSubscription(targetRecord.phone);
-      return "unreachable";
     }
   }
+
   return "unreachable";
 }
 
@@ -147,6 +218,15 @@ io.on("connection", (socket) => {
   socket.on("save-push-subscription", ({ phone, subscription }) => {
     try {
       userDirectory.savePushSubscription(phone, subscription);
+    } catch (err) {
+      // Non-critical - in-app ringing still works without this.
+    }
+  });
+
+  // ----- SAVE ONESIGNAL ID (real background ringing for the AppMint APK) -----
+  socket.on("save-onesignal-id", ({ phone, oneSignalId }) => {
+    try {
+      userDirectory.saveOneSignalId(phone, oneSignalId);
     } catch (err) {
       // Non-critical - in-app ringing still works without this.
     }
