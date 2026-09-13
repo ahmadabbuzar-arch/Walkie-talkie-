@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
-<title>Woki — Talk. Release. Done.</title>
-<meta name="description" content="Simple internet walkie-talkie. Create or join a room and talk with push-to-talk voice." />
+<title>Woki — One room. Everyone talks.</title>
+<meta name="description" content="Simple internet voice calling. Create or join a room and talk live with everyone at once." />
 <meta name="theme-color" content="#0e1013" />
 <link rel="manifest" href="manifest.json" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -399,9 +399,9 @@ button {
   width: 220px;
   height: 220px;
   border-radius: 50%;
-  background: var(--card);
-  border: 2px solid var(--card-border);
-  color: var(--text);
+  background: var(--accent);
+  border: 2px solid var(--accent);
+  color: #06120d;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -411,32 +411,35 @@ button {
   font-weight: 800;
   letter-spacing: 0.02em;
   transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-  touch-action: none;
+  box-shadow: 0 0 0 10px var(--accent-glow), 0 0 40px var(--accent-glow);
 }
 
 .talk-btn .talk-icon {
   width: 46px;
   height: 46px;
   border-radius: 50%;
-  background: var(--bg-elev);
+  background: rgba(6, 18, 13, 0.15);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .talk-btn .talk-icon svg { width: 22px; height: 22px; }
 
-.talk-btn.active {
-  background: var(--accent);
-  color: #06120d;
-  border-color: var(--accent);
-  transform: scale(1.06);
-  box-shadow: 0 0 0 14px var(--accent-glow), 0 0 60px var(--accent-glow);
+/* Speaking = live mic currently picking up your voice (a bit brighter/larger) */
+.talk-btn.speaking {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 16px var(--accent-glow), 0 0 60px var(--accent-glow);
 }
-.talk-btn.active .talk-icon { background: rgba(6, 18, 13, 0.15); }
 
-.talk-btn.locked {
-  opacity: 0.55;
+/* Muted = mic is off */
+.talk-btn.muted {
+  background: var(--card);
+  color: var(--text);
+  border-color: var(--card-border);
+  box-shadow: none;
+  transform: none;
 }
+.talk-btn.muted .talk-icon { background: var(--bg-elev); }
 
 .talk-hint {
   font-size: 13px;
@@ -451,7 +454,7 @@ button {
   gap: 4px;
   height: 20px;
 }
-.talk-btn.active .talk-waves span {
+.talk-btn.speaking .talk-waves span {
   display: block;
 }
 .talk-waves span {
@@ -510,6 +513,30 @@ button {
   margin-top: 6px;
 }
 
+/* ---------- Ringing (outgoing + incoming calls) ---------- */
+.ring-avatar {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ring-pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  opacity: 0.6;
+  animation: ringPulse 1.8s ease-out infinite;
+}
+.ring-pulse-delay { animation-delay: 0.9s; }
+
+@keyframes ringPulse {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+
 @media (min-width: 480px) {
   .talk-btn { width: 240px; height: 240px; }
 }
@@ -519,17 +546,46 @@ button {
 <body>
 <div id="app">
 
-  <!-- ============ HOME SCREEN ============ -->
-  <section id="screen-home" class="screen center">
+  <!-- ============ LOGIN SCREEN (simple phone-number identity, no OTP) ============ -->
+  <section id="screen-login" class="screen center hidden">
     <div class="spacer"></div>
     <div class="logo">WO<span>KI</span></div>
-    <p class="tagline">Talk. Release. Done.</p>
+    <p class="tagline">One room. Everyone talks.</p>
+    <div class="spacer"></div>
+    <div class="stack" style="width:100%">
+      <div>
+        <label class="field-label">Your name</label>
+        <input id="input-login-name" class="field" type="text" placeholder="Enter your name" maxlength="20" autocomplete="off" />
+      </div>
+      <div>
+        <label class="field-label">Phone number</label>
+        <input id="input-login-phone" class="field" type="tel" placeholder="+91 98765 43210" autocomplete="off" inputmode="tel" />
+      </div>
+      <button class="btn btn-primary" id="btn-login-continue">Continue</button>
+      <p class="footer-note">No OTP, no password — this just lets people call your number on Woki.</p>
+    </div>
+    <div class="spacer"></div>
+  </section>
+
+  <!-- ============ HOME SCREEN ============ -->
+  <section id="screen-home" class="screen center hidden">
+    <div class="spacer"></div>
+    <div class="logo">WO<span>KI</span></div>
+    <p class="tagline" id="home-identity">One room. Everyone talks.</p>
 
     <div class="spacer"></div>
 
     <div class="stack" style="width:100%">
-      <button class="btn btn-primary" id="btn-create-room">Create Room</button>
-      <button class="btn btn-secondary" id="btn-join-room">Join Room</button>
+      <label class="field-label">Call a number</label>
+      <input id="input-dial-phone" class="field" type="tel" placeholder="+91 98765 43210" autocomplete="off" inputmode="tel" />
+      <button class="btn btn-primary" id="btn-call-number">Call</button>
+    </div>
+
+    <div class="stack" style="width:100%; margin-top:22px">
+      <div class="btn-row">
+        <button class="btn btn-secondary" id="btn-create-room">Create Room</button>
+        <button class="btn btn-secondary" id="btn-join-room">Join Room</button>
+      </div>
     </div>
 
     <div class="spacer"></div>
@@ -537,23 +593,21 @@ button {
       <span class="status-dot"></span>
       <span id="home-status-text">Connecting...</span>
     </div>
+    <button class="btn btn-ghost" id="btn-switch-account" style="margin-top:14px; width:auto; padding:10px 18px; font-size:13px;">Switch number</button>
   </section>
 
-  <!-- ============ NAME SCREEN ============ -->
-  <section id="screen-name" class="screen hidden">
-    <div class="top-bar">
-      <button class="back-btn" data-back="screen-home">←</button>
-    </div>
+  <!-- ============ OUTGOING CALL (RINGING) SCREEN ============ -->
+  <section id="screen-calling" class="screen center hidden">
     <div class="spacer"></div>
-    <div class="center" style="width:100%">
-      <h2>What's your name?</h2>
-      <p style="margin-top:6px">This is only shown to people in your room.</p>
+    <div class="ring-avatar">
+      <div class="ring-pulse"></div>
+      <div class="ring-pulse ring-pulse-delay"></div>
+      <div class="avatar" id="calling-avatar" style="width:96px;height:96px;font-size:32px;">?</div>
     </div>
-    <div class="stack" style="width:100%; margin-top:28px">
-      <input id="input-name" class="field" type="text" placeholder="Enter your name" maxlength="20" autocomplete="off" />
-      <div class="char-count"><span id="name-count">0</span>/20</div>
-      <button class="btn btn-primary" id="btn-name-continue">Continue</button>
-    </div>
+    <h2 id="calling-name" style="margin-top:26px">Calling...</h2>
+    <p id="calling-status" style="margin-top:6px">Ringing</p>
+    <div class="spacer"></div>
+    <button class="btn btn-danger" id="btn-cancel-call" style="max-width:220px; border-radius:999px;">Cancel</button>
     <div class="spacer"></div>
   </section>
 
@@ -608,7 +662,7 @@ button {
     <div class="spacer"></div>
   </section>
 
-  <!-- ============ WALKIE-TALKIE ROOM SCREEN ============ -->
+  <!-- ============ CALL ROOM SCREEN ============ -->
   <section id="screen-room" class="screen hidden" style="max-width:520px">
     <div class="room-header">
       <div>
@@ -626,21 +680,26 @@ button {
     <div class="talk-area">
       <button class="talk-btn" id="talk-btn">
         <span class="talk-icon">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg id="mic-icon-on" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="currentColor" stroke-width="1.8"/>
             <path d="M19 11a7 7 0 01-14 0M12 19v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
           </svg>
+          <svg id="mic-icon-off" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="hidden">
+            <path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M19 11a7 7 0 01-1.3 4.06M12 19v3M9 9v3a3 3 0 001.7 2.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
         </span>
-        <span id="talk-btn-label">HOLD TO TALK</span>
+        <span id="talk-btn-label">ON CALL</span>
         <span class="talk-waves">
           <span></span><span></span><span></span><span></span><span></span>
         </span>
       </button>
-      <div class="talk-hint" id="talk-hint">Hold while speaking</div>
+      <div class="talk-hint" id="talk-hint">Tap to mute</div>
     </div>
 
     <div class="leave-btn-wrap">
-      <button class="btn btn-danger" id="btn-leave-room">Leave Room</button>
+      <button class="btn btn-danger" id="btn-leave-room">End Call</button>
     </div>
   </section>
 
@@ -663,6 +722,23 @@ button {
     <div class="modal-title" id="error-title">Couldn't connect</div>
     <p id="error-message">Check your internet and try again.</p>
     <button class="btn btn-primary" id="btn-error-ok" style="margin-top:6px">Try Again</button>
+  </div>
+</div>
+
+<!-- ============ INCOMING CALL OVERLAY ============ -->
+<div id="modal-incoming-call" class="modal-backdrop hidden" style="align-items:center;">
+  <div class="modal-sheet center" style="border-radius:24px; max-width:400px; margin:0 20px;">
+    <div class="ring-avatar" style="margin-top:6px;">
+      <div class="ring-pulse"></div>
+      <div class="ring-pulse ring-pulse-delay"></div>
+      <div class="avatar" id="incoming-avatar" style="width:88px;height:88px;font-size:30px;">?</div>
+    </div>
+    <div class="modal-title" id="incoming-caller-name" style="margin-top:20px; font-size:20px;">Someone is calling</div>
+    <p style="margin-top:4px">Incoming Woki call</p>
+    <div class="btn-row" style="margin-top:24px; width:100%;">
+      <button class="btn btn-danger" id="btn-decline-call" style="border-radius:999px;">Decline</button>
+      <button class="btn btn-primary" id="btn-answer-call" style="border-radius:999px;">Answer</button>
+    </div>
   </div>
 </div>
 
@@ -821,18 +897,19 @@ const UI = (() => {
     return String(str).replace(/["\\]/g, "\\$&");
   }
 
-  function setTalkButtonState(active, hintText) {
+  function setMicButtonState(muted, speaking) {
     const btn = $("talk-btn");
     const label = $("talk-btn-label");
-    btn.classList.toggle("active", active);
-    label.textContent = active ? "TRANSMITTING" : "HOLD TO TALK";
-    $("talk-hint").textContent = hintText || (active ? "Release to stop" : "Hold while speaking");
-  }
+    const iconOn = $("mic-icon-on");
+    const iconOff = $("mic-icon-off");
 
-  function setTalkButtonLocked(locked, hintText) {
-    const btn = $("talk-btn");
-    btn.classList.toggle("locked", locked);
-    if (hintText) $("talk-hint").textContent = hintText;
+    btn.classList.toggle("muted", muted);
+    btn.classList.toggle("speaking", speaking && !muted);
+    iconOn.classList.toggle("hidden", muted);
+    iconOff.classList.toggle("hidden", !muted);
+
+    label.textContent = muted ? "MUTED" : "ON CALL";
+    $("talk-hint").textContent = muted ? "Tap to unmute" : "Tap to mute";
   }
 
   return {
@@ -848,8 +925,7 @@ const UI = (() => {
     hideLeaveModal,
     renderParticipants,
     setParticipantSpeaking,
-    setTalkButtonState,
-    setTalkButtonLocked,
+    setMicButtonState,
     initials,
   };
 })();
@@ -899,8 +975,8 @@ const WokiRTC = (() => {
           autoGainControl: true,
         },
       });
-      // Muted by default - push-to-talk enables it only while held.
-      localStream.getAudioTracks().forEach((t) => (t.enabled = false));
+      // Mic is live as soon as you're in the call - tap the button to mute.
+      localStream.getAudioTracks().forEach((t) => (t.enabled = true));
       return { ok: true };
     } catch (err) {
       let message = "Couldn't access your microphone. Check your internet and try again.";
@@ -1014,16 +1090,73 @@ const WokiRTC = (() => {
     Array.from(peers.keys()).forEach(removePeer);
   }
 
-  function setTransmitting(isTransmitting) {
+  function setMuted(muted) {
     if (!localStream) return;
-    localStream.getAudioTracks().forEach((t) => (t.enabled = isTransmitting));
+    localStream.getAudioTracks().forEach((t) => (t.enabled = !muted));
   }
 
   function stopLocalStream() {
+    stopSpeakingDetector();
     if (localStream) {
       localStream.getTracks().forEach((t) => t.stop());
       localStream = null;
     }
+  }
+
+  // ---- Local "is my mic currently picking up sound" detector ----
+  // Purely for the speaking-indicator UI - not used to gate audio in any way.
+  let audioCtx = null;
+  let analyser = null;
+  let levelRAF = null;
+  let isCurrentlySpeaking = false;
+
+  function startSpeakingDetector(onChange) {
+    if (!localStream) return;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(localStream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.6;
+      source.connect(analyser);
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const SPEAKING_ON_THRESHOLD = 22;
+      const SPEAKING_OFF_THRESHOLD = 12;
+
+      const tick = () => {
+        analyser.getByteFrequencyData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) sum += data[i];
+        const avg = sum / data.length;
+
+        const track = localStream.getAudioTracks()[0];
+        const micLive = track && track.enabled;
+
+        if (micLive && !isCurrentlySpeaking && avg > SPEAKING_ON_THRESHOLD) {
+          isCurrentlySpeaking = true;
+          onChange(true);
+        } else if ((!micLive || avg < SPEAKING_OFF_THRESHOLD) && isCurrentlySpeaking) {
+          isCurrentlySpeaking = false;
+          onChange(false);
+        }
+        levelRAF = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (err) {
+      // Speaking indicator is a nice-to-have - safe to skip if unsupported.
+    }
+  }
+
+  function stopSpeakingDetector() {
+    if (levelRAF) cancelAnimationFrame(levelRAF);
+    levelRAF = null;
+    if (audioCtx) {
+      audioCtx.close().catch(() => {});
+      audioCtx = null;
+    }
+    analyser = null;
+    isCurrentlySpeaking = false;
   }
 
   return {
@@ -1035,8 +1168,10 @@ const WokiRTC = (() => {
     handleSignal,
     removePeer,
     removeAllPeers,
-    setTransmitting,
+    setMuted,
     stopLocalStream,
+    startSpeakingDetector,
+    stopSpeakingDetector,
   };
 })();
 
@@ -1049,32 +1184,68 @@ const WokiRTC = (() => {
 (function () {
   const state = {
     userName: localStorage.getItem("woki_name") || "",
+    userPhone: localStorage.getItem("woki_phone") || "",
+    loggedIn: false,
     pendingAction: null, // "create" | "join"
     roomCode: null,
     roomName: null,
     participants: [], // [{id, name}]
     speakingIds: new Set(),
     selfId: null,
-    isTransmitting: false,
+    isMuted: false,
     micReady: false,
     roomJoined: false,
+    // direct calling / ringing
+    outgoingRoomCode: null,
+    outgoingToPhone: null,
+    incomingCall: null, // {roomCode, callerName, callerPhone}
+    pendingAutoAnswerCode: null,
   };
 
   let socket = null;
+  let ringtoneStop = null;
 
   // ---------------- Boot ----------------
   document.addEventListener("DOMContentLoaded", () => {
     UI.cacheScreens();
-    UI.showScreen("screen-home");
     wireStaticEvents();
+    readUrlParams();
     connectSocket();
     registerServiceWorker();
+
+    if (state.userName && state.userPhone) {
+      state.loggedIn = true;
+      UI.showScreen("screen-home");
+      updateHomeIdentity();
+    } else {
+      UI.showScreen("screen-login");
+    }
   });
+
+  function readUrlParams() {
+    const params = new URLSearchParams(window.location.search);
+    const join = params.get("join");
+    if (join) {
+      state.pendingAutoAnswerCode = join.toUpperCase();
+      // Clean the URL so refreshing doesn't re-trigger it.
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }
+
+  function updateHomeIdentity() {
+    const el = UI.$("home-identity");
+    if (el) el.textContent = `${state.userName} · ${state.userPhone}`;
+  }
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("sw.js").catch(() => {
         // PWA install just won't be available - the site still works fine.
+      });
+      navigator.serviceWorker.addEventListener("message", (event) => {
+        if (event.data && event.data.type === "incoming-call-answer" && event.data.roomCode) {
+          answerCall(event.data.roomCode, state.incomingCall ? state.incomingCall.callerName : "");
+        }
       });
     }
   }
@@ -1095,13 +1266,18 @@ const WokiRTC = (() => {
         UI.setStatus("room-status", "room-status-text", "connected", "Connected");
       }
       WokiRTC.updateSelfId();
+
+      // Re-register on every (re)connect - this is what makes direct
+      // calling work even after the free-tier server sleeps and restarts.
+      if (state.loggedIn) {
+        registerIdentity();
+      }
     });
 
     socket.on("disconnect", () => {
       UI.setStatus("home-status", "home-status-text", "disconnected", "Connection lost");
       if (UI.getScreen() === "screen-room") {
         UI.setStatus("room-status", "room-status-text", "disconnected", "Connection lost");
-        stopTransmittingLocal();
       }
     });
 
@@ -1144,12 +1320,59 @@ const WokiRTC = (() => {
       UI.setParticipantSpeaking(id, false);
     });
 
+    // ----- Direct calling / ringing -----
+    socket.on("incoming-call", ({ roomCode, callerName, callerPhone }) => {
+      // Don't interrupt a call already in progress.
+      if (state.roomJoined || state.incomingCall) return;
+      state.incomingCall = { roomCode, callerName, callerPhone };
+      showIncomingCall(callerName);
+    });
+
+    socket.on("call-accepted", ({ roomCode }) => {
+      if (state.outgoingRoomCode !== roomCode) return;
+      enterRoomScreen(`Call with ${state.outgoingToPhone}`, state.participants, []);
+    });
+
+    socket.on("call-rejected", ({ roomCode }) => {
+      if (state.outgoingRoomCode !== roomCode) return;
+      UI.toast("Call declined");
+      socket.emit("leave-room");
+      endOutgoingCall();
+    });
+
+    socket.on("call-no-answer", ({ roomCode }) => {
+      if (state.outgoingRoomCode !== roomCode) return;
+      UI.toast("No answer");
+      socket.emit("leave-room");
+      endOutgoingCall();
+    });
+
+    socket.on("call-cancelled", ({ roomCode }) => {
+      if (state.incomingCall && state.incomingCall.roomCode === roomCode) {
+        hideIncomingCall();
+        UI.toast("Missed call");
+      }
+    });
+
     WokiRTC.init(socket, {
       onPeerConnectionStateChange: (peerId, connState) => {
         if (connState === "failed") {
           UI.toast("Connection to a participant failed.");
         }
       },
+    });
+  }
+
+  function registerIdentity() {
+    socket.emit("register", { phone: state.userPhone, name: state.userName }, (res) => {
+      if (!res || !res.ok) return;
+      setupPushSubscription();
+      // If we arrived here via a notification tap (app was closed), join now.
+      if (state.pendingAutoAnswerCode) {
+        const code = state.pendingAutoAnswerCode;
+        state.pendingAutoAnswerCode = null;
+        answerCall(code, "");
+      }
     });
   }
 
@@ -1174,20 +1397,32 @@ const WokiRTC = (() => {
 
   // ---------------- Static UI wiring ----------------
   function wireStaticEvents() {
-    UI.$("btn-create-room").addEventListener("click", () => goToName("create"));
-    UI.$("btn-join-room").addEventListener("click", () => goToName("join"));
+    UI.$("btn-login-continue").addEventListener("click", doLogin);
+    UI.$("input-login-phone").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doLogin();
+    });
+
+    UI.$("btn-switch-account").addEventListener("click", switchAccount);
+
+    UI.$("btn-call-number").addEventListener("click", doCallNumber);
+    UI.$("input-dial-phone").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doCallNumber();
+    });
+    UI.$("btn-cancel-call").addEventListener("click", cancelOutgoingCall);
+
+    UI.$("btn-answer-call").addEventListener("click", () => {
+      if (!state.incomingCall) return;
+      const { roomCode, callerName } = state.incomingCall;
+      hideIncomingCall();
+      answerCall(roomCode, callerName);
+    });
+    UI.$("btn-decline-call").addEventListener("click", declineIncomingCall);
+
+    UI.$("btn-create-room").addEventListener("click", () => UI.showScreen("screen-create"));
+    UI.$("btn-join-room").addEventListener("click", () => UI.showScreen("screen-join"));
 
     document.querySelectorAll("[data-back]").forEach((btn) => {
       btn.addEventListener("click", () => UI.showScreen(btn.dataset.back));
-    });
-
-    const nameInput = UI.$("input-name");
-    nameInput.addEventListener("input", () => {
-      UI.$("name-count").textContent = nameInput.value.length;
-    });
-    UI.$("btn-name-continue").addEventListener("click", submitName);
-    nameInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") submitName();
     });
 
     UI.$("btn-do-create").addEventListener("click", doCreateRoom);
@@ -1219,44 +1454,257 @@ const WokiRTC = (() => {
 
     wireTalkButton();
 
-    // Prevent a stuck "transmitting" state if the user backgrounds the tab
-    // or the page is about to unload.
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) stopTransmittingLocal();
-    });
-    window.addEventListener("blur", stopTransmittingLocal);
+    // Make sure the server always knows we've left if the tab is closed -
+    // the call itself keeps running normally if the user just switches tabs.
     window.addEventListener("pagehide", () => {
       if (state.roomJoined) socket.emit("leave-room");
+      if (state.outgoingRoomCode) socket.emit("cancel-call", { roomCode: state.outgoingRoomCode });
     });
     window.addEventListener("beforeunload", () => {
       if (state.roomJoined) socket.emit("leave-room");
     });
   }
 
-  function goToName(action) {
-    state.pendingAction = action;
-    UI.$("input-name").value = state.userName;
-    UI.$("name-count").textContent = state.userName.length;
-    UI.showScreen("screen-name");
-    setTimeout(() => UI.$("input-name").focus(), 200);
-  }
-
-  function submitName() {
-    const name = UI.$("input-name").value.trim().slice(0, window.WOKI_CONFIG.MAX_NAME_LENGTH);
+  // ---------------- Login (simple phone-number identity) ----------------
+  function doLogin() {
+    const name = UI.$("input-login-name").value.trim().slice(0, window.WOKI_CONFIG.MAX_NAME_LENGTH);
+    const phone = UI.$("input-login-phone").value.trim();
     if (!name) {
       UI.toast("Enter your name to continue.");
       return;
     }
-    state.userName = name;
-    localStorage.setItem("woki_name", name);
-
-    if (state.pendingAction === "create") {
-      UI.showScreen("screen-create");
-      setTimeout(() => UI.$("input-room-name").focus(), 200);
-    } else {
-      UI.showScreen("screen-join");
-      setTimeout(() => UI.$("input-room-code").focus(), 200);
+    if (!phone || phone.replace(/\D/g, "").length < 6) {
+      UI.toast("Enter a valid phone number.");
+      return;
     }
+    state.userName = name;
+    state.userPhone = phone;
+    state.loggedIn = true;
+    localStorage.setItem("woki_name", name);
+    localStorage.setItem("woki_phone", phone);
+
+    updateHomeIdentity();
+    UI.showScreen("screen-home");
+
+    if (socket && socket.connected) registerIdentity();
+  }
+
+  function switchAccount() {
+    localStorage.removeItem("woki_name");
+    localStorage.removeItem("woki_phone");
+    state.userName = "";
+    state.userPhone = "";
+    state.loggedIn = false;
+    UI.$("input-login-name").value = "";
+    UI.$("input-login-phone").value = "";
+    UI.showScreen("screen-login");
+  }
+
+  // ---------------- Push notifications (ring while app is closed) ----------------
+  function urlBase64ToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+    return outputArray;
+  }
+
+  async function setupPushSubscription() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    try {
+      const res = await fetch(`${window.WOKI_CONFIG.SIGNAL_SERVER_URL}/api/vapid-public-key`);
+      const { publicKey } = await res.json();
+      if (!publicKey) return; // server hasn't configured VAPID keys yet
+
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        if (Notification.permission === "default") {
+          await Notification.requestPermission();
+        }
+        if (Notification.permission !== "granted") return;
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
+      }
+      socket.emit("save-push-subscription", { phone: state.userPhone, subscription: sub.toJSON() });
+    } catch (err) {
+      // Ringing while the app is open still works fine without this.
+    }
+  }
+
+  // ---------------- Direct number-to-number calling ----------------
+  async function doCallNumber() {
+    const toPhone = UI.$("input-dial-phone").value.trim();
+    if (!toPhone || toPhone.replace(/\D/g, "").length < 6) {
+      UI.toast("Enter a valid phone number.");
+      return;
+    }
+    if (!socket.connected) {
+      UI.showErrorModal("Check your internet and try again.");
+      return;
+    }
+
+    const callBtn = UI.$("btn-call-number");
+    callBtn.disabled = true;
+    callBtn.textContent = "Calling...";
+    UI.toast("Connecting... this can take up to a minute on a free server.");
+
+    let settled = false;
+    const resetButton = () => {
+      callBtn.disabled = false;
+      callBtn.textContent = "Call";
+    };
+
+    try {
+      const mic = await WokiRTC.requestMicrophone();
+      if (!mic.ok) {
+        resetButton();
+        UI.showErrorModal(mic.error, "Microphone needed");
+        return;
+      }
+      state.micReady = true;
+
+      // If the server never acknowledges (dropped connection, cold-start
+      // taking too long, etc.) don't hang forever - fail loudly instead.
+      const ackTimeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        WokiRTC.stopLocalStream();
+        state.micReady = false;
+        resetButton();
+        UI.showErrorModal(
+          "The server didn't respond. If it's been asleep, wait a bit and try again.",
+          "Couldn't connect"
+        );
+      }, 20000);
+
+      socket.emit("call-user", { toPhone }, (res) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(ackTimeout);
+        resetButton();
+
+        if (!res || !res.ok) {
+          WokiRTC.stopLocalStream();
+          state.micReady = false;
+          UI.showErrorModal((res && res.error) || "Couldn't place the call.", "Couldn't call");
+          return;
+        }
+        state.outgoingRoomCode = res.roomCode;
+        state.outgoingToPhone = toPhone;
+        UI.$("calling-name").textContent = `Calling ${toPhone}`;
+        UI.$("calling-avatar").textContent = UI.initials(toPhone.replace(/\D/g, "").slice(-2) || "?");
+        UI.$("calling-status").textContent = res.ringingVia === "push" ? "Ringing their phone..." : "Ringing...";
+        UI.showScreen("screen-calling");
+      });
+    } catch (err) {
+      resetButton();
+      UI.showErrorModal("Something went wrong starting the call. Try again.", "Couldn't call");
+    }
+  }
+
+  function cancelOutgoingCall() {
+    if (state.outgoingRoomCode) {
+      socket.emit("cancel-call", { roomCode: state.outgoingRoomCode });
+      socket.emit("leave-room");
+    }
+    endOutgoingCall();
+  }
+
+  function endOutgoingCall() {
+    state.outgoingRoomCode = null;
+    state.outgoingToPhone = null;
+    WokiRTC.stopLocalStream();
+    state.micReady = false;
+    UI.showScreen("screen-home");
+  }
+
+  // ---------------- Incoming call UI + ringtone ----------------
+  function showIncomingCall(callerName) {
+    UI.$("incoming-caller-name").textContent = `${callerName || "Someone"} is calling`;
+    UI.$("incoming-avatar").textContent = UI.initials(callerName || "?");
+    UI.$("modal-incoming-call").classList.remove("hidden");
+    startRingtone();
+    if (navigator.vibrate) {
+      try { navigator.vibrate([400, 200, 400, 200, 400]); } catch (e) {}
+    }
+  }
+
+  function hideIncomingCall() {
+    state.incomingCall = null;
+    UI.$("modal-incoming-call").classList.add("hidden");
+    stopRingtone();
+  }
+
+  function startRingtone() {
+    stopRingtone();
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      let stopped = false;
+      const playBeep = () => {
+        if (stopped) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 880;
+        osc.type = "sine";
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.45);
+      };
+      playBeep();
+      const interval = setInterval(playBeep, 900);
+      ringtoneStop = () => {
+        stopped = true;
+        clearInterval(interval);
+        ctx.close().catch(() => {});
+      };
+    } catch (err) {
+      // No Web Audio support - the visible overlay + vibration still work.
+    }
+  }
+
+  function stopRingtone() {
+    if (ringtoneStop) {
+      ringtoneStop();
+      ringtoneStop = null;
+    }
+  }
+
+  function declineIncomingCall() {
+    if (!state.incomingCall) return;
+    socket.emit("call-response", { roomCode: state.incomingCall.roomCode, accepted: false });
+    hideIncomingCall();
+  }
+
+  async function answerCall(roomCode, callerName) {
+    hideIncomingCall();
+    if (!socket.connected) {
+      UI.showErrorModal("Check your internet and try again.");
+      return;
+    }
+    const mic = await WokiRTC.requestMicrophone();
+    if (!mic.ok) {
+      UI.showErrorModal(mic.error, "Microphone needed");
+      return;
+    }
+    state.micReady = true;
+
+    socket.emit("join-room", { roomCode, userName: state.userName }, (res) => {
+      if (!res.ok) {
+        UI.showErrorModal(res.error || "Couldn't join the call.", "Couldn't join");
+        return;
+      }
+      state.roomCode = res.roomCode;
+      state.roomName = res.roomName;
+      state.participants = res.participants;
+      enterRoomScreen(callerName ? `Call with ${callerName}` : res.roomName, res.participants, res.existingParticipants || []);
+    });
   }
 
   // ---------------- Create room ----------------
@@ -1354,14 +1802,24 @@ const WokiRTC = (() => {
   function enterRoomScreen(roomName, participants, existingParticipants) {
     state.roomJoined = true;
     state.speakingIds = new Set();
+    state.isMuted = false;
 
     UI.$("room-title").textContent = roomName;
     UI.renderParticipants(participants, state.selfId, state.speakingIds);
     UI.setStatus("room-status", "room-status-text", "connected", "Connected");
-    UI.setTalkButtonState(false);
+    UI.setMicButtonState(false, false);
     UI.showScreen("screen-room");
 
     connectToAllExisting(existingParticipants);
+
+    // Mic is already live (set in requestMicrophone) - start watching its
+    // volume so we can show a "you're speaking" indicator to others.
+    WokiRTC.startSpeakingDetector((speaking) => {
+      UI.setMicButtonState(state.isMuted, speaking);
+      if (socket && socket.connected) {
+        socket.emit(speaking ? "speaking-start" : "speaking-stop");
+      }
+    });
   }
 
   function connectToAllExisting(existingParticipants) {
@@ -1377,8 +1835,8 @@ const WokiRTC = (() => {
   }
 
   function leaveRoomCleanup() {
-    stopTransmittingLocal();
     if (socket && socket.connected) socket.emit("leave-room");
+    WokiRTC.stopSpeakingDetector();
     WokiRTC.removeAllPeers();
     WokiRTC.stopLocalStream();
     state.roomJoined = false;
@@ -1387,60 +1845,27 @@ const WokiRTC = (() => {
     state.participants = [];
     state.speakingIds = new Set();
     state.micReady = false;
+    state.isMuted = false;
   }
 
-  // ---------------- Push to talk ----------------
+  // ---------------- Mute toggle ----------------
   function wireTalkButton() {
     const btn = UI.$("talk-btn");
-
-    const start = (e) => {
-      e.preventDefault();
-      startTransmitting();
-    };
-    const stop = (e) => {
-      if (e) e.preventDefault();
-      stopTransmittingLocal();
-    };
-
-    btn.addEventListener("pointerdown", start);
-    btn.addEventListener("pointerup", stop);
-    btn.addEventListener("pointercancel", stop);
-    btn.addEventListener("pointerleave", stop);
-    // Fallback for older browsers without full Pointer Events support
-    btn.addEventListener("touchstart", start, { passive: false });
-    btn.addEventListener("touchend", stop);
-    btn.addEventListener("touchcancel", stop);
+    btn.addEventListener("click", toggleMute);
   }
 
-  function startTransmitting() {
-    if (state.isTransmitting) return;
+  function toggleMute() {
     if (!state.micReady) {
       UI.toast("Microphone isn't ready yet.");
       return;
     }
-    if (!socket.connected) {
-      UI.toast("No connection. Check your internet.");
-      return;
+    state.isMuted = !state.isMuted;
+    WokiRTC.setMuted(state.isMuted);
+    UI.setMicButtonState(state.isMuted, false);
+    if (socket && socket.connected) {
+      socket.emit("mute-changed", { muted: state.isMuted });
+      if (state.isMuted) socket.emit("speaking-stop");
     }
-
-    socket.emit("talk-start", null, (res) => {
-      if (!res || !res.ok) {
-        UI.setTalkButtonLocked(true, res && res.error ? res.error : "Someone else is talking");
-        setTimeout(() => UI.setTalkButtonLocked(false, "Hold while speaking"), 1200);
-        return;
-      }
-      state.isTransmitting = true;
-      WokiRTC.setTransmitting(true);
-      UI.setTalkButtonState(true);
-    });
-  }
-
-  function stopTransmittingLocal() {
-    if (!state.isTransmitting) return;
-    state.isTransmitting = false;
-    WokiRTC.setTransmitting(false);
-    UI.setTalkButtonState(false);
-    if (socket && socket.connected) socket.emit("talk-stop");
   }
 })();
 
