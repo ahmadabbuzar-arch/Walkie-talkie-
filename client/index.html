@@ -696,6 +696,7 @@ button {
         </span>
       </button>
       <div class="talk-hint" id="talk-hint">Tap to mute</div>
+      <button class="btn btn-ghost" id="btn-speaker-toggle" style="margin-top:18px; width:auto; padding:10px 20px; font-size:13px; border-radius:999px;">🔊 Speaker: On</button>
     </div>
 
     <div class="leave-btn-wrap">
@@ -745,6 +746,7 @@ button {
 <div id="toast-container"></div>
 
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
 <script>
 
 /* ===== config.js ===== */
@@ -778,6 +780,13 @@ window.WOKI_CONFIG = {
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
   ],
+
+  // From your OneSignal app's Settings > Keys & IDs. This is a public
+  // identifier (safe to embed here) - it tells the OneSignal SDK which
+  // app to register this device's push subscription against. Real
+  // background-ringing (app fully closed) goes through OneSignal +
+  // Firebase, which the AppMint-built APK bridges natively.
+  ONESIGNAL_APP_ID: "fd81e0a8-3dd5-4101-8d67-5952d6440331",
 };
 
 
@@ -1012,6 +1021,7 @@ const WokiRTC = (() => {
         audioEl.id = `audio-${peerId}`;
         audioEl.autoplay = true;
         audioEl.playsInline = true;
+        audioEl.volume = 1.0;
         document.body.appendChild(audioEl);
       }
       audioEl.srcObject = event.streams[0];
@@ -1019,6 +1029,7 @@ const WokiRTC = (() => {
         // Autoplay can be blocked until the user has interacted with the
         // page once - the Create/Join/Talk button tap satisfies that.
       });
+      applySinkToElement(audioEl);
     };
 
     pc.onconnectionstatechange = () => {
@@ -1103,6 +1114,45 @@ const WokiRTC = (() => {
     }
   }
 
+  // ---- Speaker vs. earpiece output ----
+  // Mobile Chrome/WebViews often route WebRTC audio to the quiet earpiece
+  // by default (as if you're holding it to your ear like a real phone
+  // call). This tries to force it to the loud external speaker instead,
+  // using the standard (if patchily supported) setSinkId() API.
+  let speakerOn = true; // Woki defaults to loudspeaker, like a group call
+
+  function isSpeakerSwitchSupported() {
+    return typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+  }
+
+  async function applySinkToElement(audioEl) {
+    if (!isSpeakerSwitchSupported()) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const outputs = devices.filter((d) => d.kind === "audiooutput");
+      const pattern = speakerOn ? /speaker/i : /ear ?piece|receiver/i;
+      const match = outputs.find((d) => pattern.test(d.label));
+      // If we can't find a labeled match, "default" is usually the
+      // earpiece on phones, so only switch when we found what we wanted.
+      if (match) await audioEl.setSinkId(match.deviceId);
+      else if (speakerOn) await audioEl.setSinkId(""); // fall back to default output
+    } catch (err) {
+      // Silently ignore - the toggle button will just have no visible effect
+      // on devices/browsers that don't support output switching.
+    }
+  }
+
+  async function setSpeakerphone(on) {
+    speakerOn = on;
+    const elements = document.querySelectorAll('audio[id^="audio-"]');
+    let anyApplied = false;
+    for (const el of elements) {
+      await applySinkToElement(el);
+      anyApplied = true;
+    }
+    return { supported: isSpeakerSwitchSupported(), hadPeers: anyApplied };
+  }
+
   // ---- Local "is my mic currently picking up sound" detector ----
   // Purely for the speaking-indicator UI - not used to gate audio in any way.
   let audioCtx = null;
@@ -1172,6 +1222,8 @@ const WokiRTC = (() => {
     stopLocalStream,
     startSpeakingDetector,
     stopSpeakingDetector,
+    setSpeakerphone,
+    isSpeakerSwitchSupported,
   };
 })();
 
@@ -1193,6 +1245,7 @@ const WokiRTC = (() => {
     speakingIds: new Set(),
     selfId: null,
     isMuted: false,
+    speakerOn: true,
     micReady: false,
     roomJoined: false,
     // direct calling / ringing
@@ -1367,6 +1420,7 @@ const WokiRTC = (() => {
     socket.emit("register", { phone: state.userPhone, name: state.userName }, (res) => {
       if (!res || !res.ok) return;
       setupPushSubscription();
+      setupOneSignal();
       // If we arrived here via a notification tap (app was closed), join now.
       if (state.pendingAutoAnswerCode) {
         const code = state.pendingAutoAnswerCode;
@@ -1444,6 +1498,7 @@ const WokiRTC = (() => {
     UI.$("btn-enter-room").addEventListener("click", enterRoom);
 
     UI.$("btn-leave-room").addEventListener("click", () => UI.showLeaveModal());
+    UI.$("btn-speaker-toggle").addEventListener("click", toggleSpeaker);
     UI.$("btn-leave-cancel").addEventListener("click", () => UI.hideLeaveModal());
     UI.$("btn-leave-confirm").addEventListener("click", () => {
       UI.hideLeaveModal();
@@ -1533,6 +1588,42 @@ const WokiRTC = (() => {
     } catch (err) {
       // Ringing while the app is open still works fine without this.
     }
+  }
+
+  // Real "app fully closed" ringing for the AppMint-built APK, via
+  // OneSignal + Firebase. Safe to skip on plain web - if OneSignal isn't
+  // configured/loaded, this just does nothing and in-app ringing
+  // (setupPushSubscription above) still works.
+  function setupOneSignal() {
+    const appId = window.WOKI_CONFIG.ONESIGNAL_APP_ID;
+    if (!appId || appId.indexOf("YOUR-") === 0 || typeof window.OneSignalDeferred === "undefined") return;
+
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      try {
+        await OneSignal.init({
+          appId,
+          serviceWorkerPath: "sw.js",
+          serviceWorkerParam: { scope: "/" },
+        });
+
+        const sendIdToServer = () => {
+          const id = OneSignal.User.PushSubscription.id;
+          if (id) socket.emit("save-onesignal-id", { phone: state.userPhone, oneSignalId: id });
+        };
+
+        // The subscription id may not exist yet right after init - it
+        // shows up once permission is granted, so listen for that too.
+        OneSignal.User.PushSubscription.addEventListener("change", sendIdToServer);
+        sendIdToServer();
+
+        if (OneSignal.Notifications.permission !== true) {
+          await OneSignal.Notifications.requestPermission();
+        }
+      } catch (err) {
+        // AppMint's native OneSignal bridge (if any) or misconfigured
+        // App ID - in-app ringing still works without this.
+      }
+    });
   }
 
   // ---------------- Direct number-to-number calling ----------------
@@ -1803,11 +1894,13 @@ const WokiRTC = (() => {
     state.roomJoined = true;
     state.speakingIds = new Set();
     state.isMuted = false;
+    state.speakerOn = true;
 
     UI.$("room-title").textContent = roomName;
     UI.renderParticipants(participants, state.selfId, state.speakingIds);
     UI.setStatus("room-status", "room-status-text", "connected", "Connected");
     UI.setMicButtonState(false, false);
+    UI.$("btn-speaker-toggle").textContent = "🔊 Speaker: On";
     UI.showScreen("screen-room");
 
     connectToAllExisting(existingParticipants);
@@ -1865,6 +1958,18 @@ const WokiRTC = (() => {
     if (socket && socket.connected) {
       socket.emit("mute-changed", { muted: state.isMuted });
       if (state.isMuted) socket.emit("speaking-stop");
+    }
+  }
+
+  // ---------------- Speaker / earpiece toggle ----------------
+  async function toggleSpeaker() {
+    state.speakerOn = !state.speakerOn;
+    const btn = UI.$("btn-speaker-toggle");
+    btn.textContent = state.speakerOn ? "🔊 Speaker: On" : "🔈 Speaker: Off";
+
+    const result = await WokiRTC.setSpeakerphone(state.speakerOn);
+    if (!result.supported) {
+      UI.toast("This device/browser doesn't support switching speakers — try your phone's own volume/speaker button.");
     }
   }
 })();
