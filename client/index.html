@@ -1,8 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-<script>eruda.init();</script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
 <title>Woki — One room. Everyone talks.</title>
@@ -1540,6 +1538,18 @@ const WokiRTC = (() => {
     state.loggedIn = true;
     localStorage.setItem("woki_name", name);
     localStorage.setItem("woki_phone", phone);
+
+    // IMPORTANT: this must be called directly inside this click handler,
+    // not after any await/async round-trip. Chrome silently ignores
+    // Notification.requestPermission() (never shows the prompt) once the
+    // "you just clicked something" window has passed - waiting for a
+    // server response first was why permission was never actually being
+    // granted, which in turn broke both background notifications and
+    // OneSignal registration.
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+    setupOneSignal();
 
     updateHomeIdentity();
     UI.showScreen("screen-home");
