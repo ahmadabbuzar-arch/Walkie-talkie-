@@ -1379,6 +1379,7 @@ const WokiRTC = (() => {
       if (state.roomJoined || state.incomingCall) return;
       state.incomingCall = { roomCode, callerName, callerPhone };
       showIncomingCall(callerName);
+      notifyIncomingCallIfBackgrounded({ roomCode, callerName });
     });
 
     socket.on("call-accepted", ({ roomCode }) => {
@@ -1606,19 +1607,25 @@ const WokiRTC = (() => {
           serviceWorkerParam: { scope: "/" },
         });
 
-        const sendIdToServer = () => {
-          const id = OneSignal.User.PushSubscription.id;
-          if (id) socket.emit("save-onesignal-id", { phone: state.userPhone, oneSignalId: id });
-        };
-
-        // The subscription id may not exist yet right after init - it
-        // shows up once permission is granted, so listen for that too.
-        OneSignal.User.PushSubscription.addEventListener("change", sendIdToServer);
-        sendIdToServer();
-
         if (OneSignal.Notifications.permission !== true) {
           await OneSignal.Notifications.requestPermission();
         }
+
+        // This is the important part: tie this device to our own phone
+        // number as a OneSignal "External ID". The server can then target
+        // a call by phone number directly - no separate ID needs to be
+        // captured/stored on our side, which is more reliable inside a
+        // WebView-wrapped APK where the raw subscription id can be flaky.
+        await OneSignal.login(state.userPhone);
+
+        // Also try to grab the raw subscription id as a secondary,
+        // best-effort fallback - harmless if it doesn't resolve.
+        const id = OneSignal.User.PushSubscription.id;
+        if (id) socket.emit("save-onesignal-id", { phone: state.userPhone, oneSignalId: id });
+        OneSignal.User.PushSubscription.addEventListener("change", () => {
+          const changedId = OneSignal.User.PushSubscription.id;
+          if (changedId) socket.emit("save-onesignal-id", { phone: state.userPhone, oneSignalId: changedId });
+        });
       } catch (err) {
         // AppMint's native OneSignal bridge (if any) or misconfigured
         // App ID - in-app ringing still works without this.
@@ -1722,6 +1729,36 @@ const WokiRTC = (() => {
     if (navigator.vibrate) {
       try { navigator.vibrate([400, 200, 400, 200, 400]); } catch (e) {}
     }
+  }
+
+  // The in-page ring overlay above is invisible while the app is
+  // minimized (but still socket-connected, so no push was needed/sent).
+  // Fire an actual OS notification in that case so it's not just a
+  // ringtone playing with nothing visible.
+  function notifyIncomingCallIfBackgrounded({ roomCode, callerName }) {
+    if (!document.hidden) return; // foreground - the overlay above is enough
+    if (!("serviceWorker" in navigator) || typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+
+    navigator.serviceWorker.ready.then((reg) => {
+      reg.showNotification(`${callerName || "Someone"} is calling`, {
+        body: "Tap Answer to pick up on Woki",
+        icon: "./icons/icon-192.png",
+        badge: "./icons/icon-192.png",
+        tag: `call-${roomCode}`,
+        requireInteraction: true,
+        vibrate: [300, 150, 300, 150, 300],
+        data: {
+          roomCode,
+          callerName,
+          respondUrl: `${window.WOKI_CONFIG.SIGNAL_SERVER_URL}/api/call-response`,
+        },
+        actions: [
+          { action: "answer", title: "Answer" },
+          { action: "decline", title: "Decline" },
+        ],
+      });
+    });
   }
 
   function hideIncomingCall() {
