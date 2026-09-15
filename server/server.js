@@ -91,11 +91,27 @@ async function sendOneSignalPush(targetRecord, { roomCode, callerName }) {
     },
     body: JSON.stringify(body),
   });
+  const responseText = await res.text().catch(() => "");
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`OneSignal push failed: ${res.status} ${text}`);
+    console.error(`[OneSignal] push FAILED (${res.status}) for ${targetRecord.phone}:`, responseText);
+    throw new Error(`OneSignal push failed: ${res.status} ${responseText}`);
   }
-  return res.json();
+  let json;
+  try {
+    json = JSON.parse(responseText);
+  } catch (e) {
+    json = {};
+  }
+  console.log(`[OneSignal] push sent for ${targetRecord.phone} - recipients: ${json.recipients}, id: ${json.id}`);
+  if (!json.recipients || json.recipients === 0) {
+    // OneSignal accepted the request but nobody actually got it - this
+    // means the target device never successfully registered its
+    // external_id/subscription with OneSignal. Treat it the same as a
+    // failure so we fall through to plain Web Push instead of silently
+    // reporting "ringingVia: onesignal" when nothing actually rang.
+    throw new Error(`OneSignal accepted the push but delivered it to 0 recipients (external_id "${targetRecord.phone}" may not be registered)`);
+  }
+  return json;
 }
 
 const app = express();
@@ -138,6 +154,10 @@ function getSocketById(socketId) {
 }
 
 async function ringTarget(targetRecord, payload) {
+  console.log(
+    `[ringTarget] calling ${targetRecord.phone} - socketId=${targetRecord.socketId || "none"}, oneSignalId=${targetRecord.oneSignalId || "none"}, hasPushSub=${Boolean(targetRecord.pushSubscription)}`
+  );
+
   // Prefer waking them up in-app if they're currently connected.
   const targetSocket = getSocketById(targetRecord.socketId);
   if (targetSocket) {
@@ -154,8 +174,11 @@ async function ringTarget(targetRecord, payload) {
       await sendOneSignalPush(targetRecord, payload);
       return "onesignal";
     } catch (err) {
+      console.error(`[ringTarget] OneSignal path failed for ${targetRecord.phone}:`, err.message);
       // Fall through and try plain Web Push instead.
     }
+  } else {
+    console.log("[ringTarget] OneSignal not enabled (missing ONESIGNAL_APP_ID/ONESIGNAL_REST_API_KEY)");
   }
 
   // Plain Web Push - works while a browser tab/PWA is open in the
